@@ -3,20 +3,12 @@ import numpy as np
 from keras import backend as K
 from keras.losses import binary_crossentropy
 from skimage.morphology import label
+from sklearn.metrics import roc_curve, auc
 
 
 def mean_iou(y_true, y_pred):
     """
     IOUの計算モジュール
-
-    inputs
-    -----
-    y_true(np.array): 正解画像
-    y_pred(np.array): 出力画像
-
-    output
-    -----
-    float: IOUのスコア
     """
     prec = []
     for t in np.arange(0.5, 1.0, 0.05):
@@ -40,18 +32,45 @@ def dice_coef_(y_true, y_pred):
 def bce_dice_loss(y_true, y_pred):
     """
     bce_dice_lossの計算モジュール
-
-    inputs
-    -----
-    y_true(np.array): 正解画像
-    y_pred(np.array): 出力画像
-
-    output
-    -----
-    float: bce_dice_lossのスコア
     """
     return 0.5 * binary_crossentropy(y_true, y_pred) - dice_coef_(y_true, y_pred)
 
+
+def recall_score(y_true, y_pred):
+    """
+    recall(再現率)
+    """
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+    recall = true_positives / (possible_positives + K.epsilon())
+    return recall
+
+
+def precision_score(y_true, y_pred):
+    """
+    precision(適合率)
+    """
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    false_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    precision = true_positives / (false_positives + K.epsilon())
+    return precision
+
+
+def f1_score(y_true, y_pred):
+    """
+    f値
+    """
+    pre = precision_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred)
+    return 2 * pre * rec / (pre + rec)
+
+
+def rocauc_score(y_true, y_pred):
+    """
+    ROC AUC
+    """
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred, pos_label=1)
+    return auc(fpr, tpr)
 
 def rle_encoding(x):
     dots = np.where(x.T.flatten() == 1)[0]

@@ -7,8 +7,10 @@ from keras.callbacks import ModelCheckpoint
 from generator import generator
 from make_df import make_df
 from model.unet import Unet
-from utils import mean_iou
 from utils import bce_dice_loss
+from utils import recall_score
+from utils import precision_score
+from utils import rocauc_score
 from utils import prob_to_rles
 
 
@@ -25,9 +27,10 @@ if __name__ == "__main__":
     train_generator, val_generator = generator(xtr, xval, ytr, yval, batch_size)
 
     model = Unet(img_size)
-    model.compile(optimizer='adam', loss=bce_dice_loss, metrics=[mean_iou])
+    model.compile(optimizer='adam', loss=bce_dice_loss, metrics=[bce_dice_loss,
+     recall_score, precision_score, rocauc_score])
     ckpt = ModelCheckpoint('.model.hdf5', save_best_only=True,
-                           monitor='val_mean_iou', mode='max')
+                           monitor='val_rocauc_score', mode='max')
 
     model.fit_generator(train_generator, steps_per_epoch=len(xtr)/6,
                         epochs=50, validation_data=val_generator,
