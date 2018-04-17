@@ -10,7 +10,7 @@ from model.unet import Unet
 from utils import bce_dice_loss
 from utils import recall_score
 from utils import precision_score
-from utils import rocauc_score
+from utils import RocAucEvaluation
 from utils import prob_to_rles
 
 
