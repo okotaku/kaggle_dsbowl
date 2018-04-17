@@ -1,9 +1,10 @@
 import tensorflow as tf
 import numpy as np
 from keras import backend as K
+from keras.callbacks import Callback
 from keras.losses import binary_crossentropy
 from skimage.morphology import label
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_auc_score
 
 
 def mean_iou(y_true, y_pred):
@@ -65,13 +66,57 @@ def f1_score(y_true, y_pred):
     return 2 * pre * rec / (pre + rec)
 
 
-def rocauc_score(y_true, y_pred):
+def sensitivity_score(y_true, y_pred):
     """
-    ROC AUC
+    sensitivity(感度)
     """
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred, pos_label=1)
-    return auc(fpr, tpr)
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+    return true_positives / (possible_positives + K.epsilon())
 
+
+def specificity_score(y_true, y_pred):
+    """
+    specificity(特異度)
+    """
+    true_negatives = K.sum(K.round(K.clip((1-y_true) * (1-y_pred), 0, 1)))
+    possible_negatives = K.sum(K.round(K.clip(1-y_true, 0, 1)))
+    return true_negatives / (possible_negatives + K.epsilon())
+
+
+class RocAucEvaluation(Callback):
+    def __init__(self, validation_data=(), interval=1):
+        super(Callback, self).__init__()
+
+        self.interval = interval
+        self.X_val, self.y_val = validation_data
+
+    def on_epoch_end(self, epoch, logs={}):
+        if epoch % self.interval == 0:
+            y_pred = self.model.predict(self.X_val, verbose=0)
+            score = roc_auc_score(self.y_val.reshape(-1), y_pred.reshape(-1))
+            print("\n ROC-AUC - epoch: {:d} - score: {:.6f}".format(epoch+1, score))
+            
+            
+def matthews_correlation(y_true, y_pred):
+    y_pred_pos = K.round(K.clip(y_pred, 0, 1))
+    y_pred_neg = 1 - y_pred_pos
+
+    y_pos = K.round(K.clip(y_true, 0, 1))
+    y_neg = 1 - y_pos
+
+    tp = K.sum(y_pos * y_pred_pos)
+    tn = K.sum(y_neg * y_pred_neg)
+
+    fp = K.sum(y_neg * y_pred_pos)
+    fn = K.sum(y_pos * y_pred_neg)
+
+    numerator = (tp * tn - fp * fn)
+    denominator = K.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+
+    return numerator / (denominator + K.epsilon())
+            
+            
 def rle_encoding(x):
     dots = np.where(x.T.flatten() == 1)[0]
     run_lengths = []
