@@ -1,15 +1,64 @@
 """
-https://github.com/nickhitsai/LinkNet-Keras
+https://www.kaggle.com/kmader/keras-linknet
 """
-from keras.layers import Input, Activation, add
-from keras.layers.convolutional import Conv2D, MaxPooling2D, UpSampling2D
 from keras.models import Model
-from keras.layers.normalization import BatchNormalization
+from keras.layers import Input, Conv2D, Deconv2D, MaxPool2D, concatenate, AvgPool2D
+from keras.layers import BatchNormalization, Activation
+from keras.layers.core import Dropout, Lambda
+from keras import backend as K
 from keras.regularizers import l2
-import keras.backend as K
+from keras.layers import add
+
+
+s_c2 = lambda fc, k, s = 1, activation='elu', **kwargs: Conv2D(fc, kernel_size = (k,k), strides= (s,s),
+                                       padding = 'same', activation = activation,
+                                       **kwargs)
+
+
+s_d2 = lambda fc, k, s = 1, activation='elu', **kwargs: Deconv2D(fc, kernel_size=(k,k), strides=(s,s), 
+                                                       padding = 'same', activation=activation,
+                                                       **kwargs)
+
+
+c2 = lambda fc, k, s = 1, **kwargs: lambda x: Activation('elu')(BatchNormalization()(
+    Conv2D(fc, kernel_size = (k,k), strides= (s,s),
+           padding = 'same', activation = 'linear', **kwargs)(x)))
+
+
+d2 = lambda fc, k, s = 1, **kwargs: lambda x: Activation('elu')(BatchNormalization()(
+    Deconv2D(fc, kernel_size=(k,k), strides=(s,s), 
+             padding = 'same', activation='linear', **kwargs)(x)))
+
+
+def LinkNet(img_size):
+    start_in = Input((img_size, img_size, 3), name = 'Input')
+    in_filt = c2(64, 7, 2)(start_in)
+    in_mp = MaxPool2D((3,3), strides = (2,2), padding = 'same')(in_filt)
+
+    enc1 = enc_block(64, 64)(in_mp)
+    enc2 = enc_block(64, 128)(enc1)
+
+    dec2 = dec_block(64, 128)(enc2)
+    dec2_cat = _shortcut(enc1, dec2)
+    dec1 = dec_block(64, 64)(dec2_cat)
+
+    last_out = _shortcut(dec1, in_mp)
+    
+    out_upconv = d2(32, 3, 2)(last_out)
+    out_conv = c2(32, 3)(out_upconv)
+    out = s_d2(1, 2, 2, activation = 'sigmoid')(out_conv)
+
+    model = Model(inputs = [start_in], outputs = [out])
+
+    return model
 
 
 def _shortcut(input, residual):
+    """Adds a shortcut between input and residual block and merges them with "sum"
+    """
+    # Expand channels of shortcut to match residual.
+    # Stride appropriately to match residual (width, height)
+    # Should be int if network architecture is correctly configured.
     input_shape = K.int_shape(input)
     residual_shape = K.int_shape(residual)
     stride_width = int(round(input_shape[1] / residual_shape[1]))
@@ -17,6 +66,7 @@ def _shortcut(input, residual):
     equal_channels = input_shape[3] == residual_shape[3]
 
     shortcut = input
+    # 1 X 1 conv if shape is different. Else identity.
     if stride_width > 1 or stride_height > 1 or not equal_channels:
         shortcut = Conv2D(filters=residual_shape[3],
                           kernel_size=(1, 1),
@@ -28,96 +78,19 @@ def _shortcut(input, residual):
     return add([shortcut, residual])
 
 
-def encoder_block(input_tensor, m, n):
-    x = BatchNormalization()(input_tensor)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=n, kernel_size=(3, 3), strides=(2, 2), padding="same")(x)
-
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=n, kernel_size=(3, 3), padding="same")(x)
-
-    added_1 = _shortcut(input_tensor, x)
-
-    x = BatchNormalization()(added_1)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=n, kernel_size=(3, 3), padding="same")(x)
-
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=n, kernel_size=(3, 3), padding="same")(x)
-
-    added_2 = _shortcut(added_1, x)
-
-    return added_2
+def enc_block(m, n):
+    def block_func(x):
+        cx = c2(n, 3)(c2(n, 3, 2)(x))
+        cs1 = concatenate([AvgPool2D((2,2))(x), 
+                           cx])
+        cs2 = c2(n, 3)(c2(n, 3)(cs1))
+        return concatenate([cs2, cs1])
+    return block_func
 
 
-def decoder_block(input_tensor, m, n):
-    x = BatchNormalization()(input_tensor)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=int(m/4), kernel_size=(1, 1))(x)
-
-    x = UpSampling2D((2, 2))(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=int(m/4), kernel_size=(3, 3), padding='same')(x)
-
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=n, kernel_size=(1, 1))(x)
-
-    return x
-
-
-def LinkNet(img_size):
-    inputs = Input(shape=(img_size, img_size, 3))
-
-    x = BatchNormalization()(inputs)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=64, kernel_size=(7, 7), strides=(2, 2))(x)
-
-    x = MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
-
-    encoder_1 = encoder_block(input_tensor=x, m=64, n=64)
-
-    encoder_2 = encoder_block(input_tensor=encoder_1, m=64, n=128)
-
-    encoder_3 = encoder_block(input_tensor=encoder_2, m=128, n=256)
-
-    encoder_4 = encoder_block(input_tensor=encoder_3, m=256, n=512)
-
-    decoder_4 = decoder_block(input_tensor=encoder_4, m=512, n=256)
-
-    decoder_3_in = add([decoder_4, encoder_3])
-    decoder_3_in = Activation('relu')(decoder_3_in)
-
-    decoder_3 = decoder_block(input_tensor=decoder_3_in, m=256, n=128)
-
-    decoder_2_in = add([decoder_3, encoder_2])
-    decoder_2_in = Activation('relu')(decoder_2_in)
-
-    decoder_2 = decoder_block(input_tensor=decoder_2_in, m=128, n=64)
-
-    decoder_1_in = add([decoder_2, encoder_1])
-    decoder_1_in = Activation('relu')(decoder_1_in)
-
-    decoder_1 = decoder_block(input_tensor=decoder_1_in, m=64, n=64)
-
-    x = UpSampling2D((2, 2))(decoder_1)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=32, kernel_size=(3, 3), padding="same")(x)
-
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(filters=32, kernel_size=(3, 3), padding="same")(x)
-
-    x = UpSampling2D((2, 2))(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-
-    x = Conv2D(filters=1, kernel_size=(2, 2), padding="same")(x)
-
-    model = Model(inputs=inputs, outputs=x)
-
-    return model
+def dec_block(m, n):
+    def block_func(x):
+        cx1 = c2(m//4, 1)(x)
+        cx2 = d2(m//4, 3, 2)(cx1)
+        return Dropout(0.1)(c2(n, 1)(cx2))
+    return block_func
